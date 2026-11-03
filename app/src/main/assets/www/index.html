@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Legion Logic</title>
+<style>
+  :root { --bg:#0b1020; --panel:#141b33ee; --text:#f1f5ff; --muted:#9aa6c8; --accent:#3b82f6; --danger:#e0413c; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family:system-ui,sans-serif; overflow:hidden; touch-action:none; }
+  canvas { display:block; }
+  #hud { position:fixed; top:0; left:0; right:0; display:flex; align-items:center; gap:10px; padding:calc(env(safe-area-inset-top) + 8px) 12px 8px; font-weight:700; font-size:15px; text-shadow:0 1px 3px #000; }
+  #hud[hidden] { display:none; }
+  #hud .grow { flex:1; }
+  #bar { height:8px; background:#ffffff26; border-radius:4px; overflow:hidden; } #bar i { display:block; height:100%; width:0; background:var(--accent); }
+  #pauseBtn { width:44px; height:44px; border-radius:12px; border:0; background:#ffffff22; color:var(--text); font-size:18px; font-weight:800; }
+  .overlay { position:fixed; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:24px; background:#0b1020cc; text-align:center; }
+  .overlay.show { display:flex; }
+  h1 { margin:0 0 4px; font-size:40px; letter-spacing:1px; } h1 b { color:var(--accent); }
+  .overlay p { margin:0; color:var(--muted); max-width:340px; line-height:1.4; }
+  .best { font-size:20px; font-weight:700; color:var(--text) !important; }
+  button.big { width:min(300px,100%); min-height:54px; border:0; border-radius:14px; background:var(--accent); color:#fff; font-size:18px; font-weight:700; }
+  button.big.alt { background:#ffffff1f; } button.big.warn { background:transparent; border:2px solid var(--danger); color:var(--danger); }
+  button.big[hidden] { display:none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud" hidden>
+  <span id="lvl">LV 1</span>
+  <div class="grow"><div id="bar"><i></i></div></div>
+  <span id="score">0</span>
+  <button id="pauseBtn" aria-label="Pause">II</button>
+</div>
+
+<div id="menu" class="overlay show">
+  <h1>LEGION <b>LOGIC</b></h1>
+  <p class="best" id="menuBest">Best: 0</p>
+  <p>Drag left or right to pick a gate. Do the maths: walls and enemies need a big enough legion. Behind a divider you are locked in, so work out the whole path first.</p>
+  <button class="big" id="continueBtn" hidden>Continue</button>
+  <button class="big" id="newBtn">New game</button>
+  <button class="big warn" id="resetBtn">Reset best score</button>
+  <button class="big alt" id="exitBtn" hidden>Quit game</button>
+</div>
+
+<div id="pause" class="overlay">
+  <h1>Paused</h1>
+  <p class="best" id="pauseInfo"></p>
+  <button class="big" id="resumeBtn">Resume</button>
+  <button class="big alt" id="restartBtn">Restart from level 1</button>
+  <button class="big alt" id="quitBtn">Quit to menu</button>
+</div>
+
+<script src="logic.js"></script>
+<script src="main.js"></script>
+</body>
+</html>
