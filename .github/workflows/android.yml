@@ -13,7 +13,7 @@ jobs:
         with:
           node-version: 20
       - name: Game logic tests (solver clears levels 1-40, score rules)
-        run: node --test test/
+        run: node --test test/logic.test.js
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

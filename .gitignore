@@ -5,3 +5,4 @@ local.properties
 *.iml
 .claude-flow/
 .swarm/
+node_modules/

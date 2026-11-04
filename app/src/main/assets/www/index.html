@@ -12,6 +12,12 @@
   #hud { position:fixed; top:0; left:0; right:0; display:flex; align-items:center; gap:10px; padding:calc(env(safe-area-inset-top) + 8px) 12px 8px; font-weight:700; font-size:15px; text-shadow:0 1px 3px #000; }
   #hud[hidden] { display:none; }
   #hud .grow { flex:1; }
+  #score { font-size:13px; margin-bottom:4px; text-align:center; }
+  #lvlBadge { min-width:68px; padding:5px 10px; border-radius:12px; background:var(--accent); text-align:center; line-height:1; box-shadow:0 2px 8px #0008; }
+  #lvlBadge small { display:block; font-size:10px; letter-spacing:1.5px; opacity:.85; }
+  #lvlBadge b { font-size:26px; }
+  #lvlBadge.pop { animation:pop .6s ease-out; }
+  @keyframes pop { 0% { transform:scale(1); } 35% { transform:scale(1.4); background:#facc15; color:#111; } 100% { transform:scale(1); } }
   #bar { height:8px; background:#ffffff26; border-radius:4px; overflow:hidden; } #bar i { display:block; height:100%; width:0; background:var(--accent); }
   #pauseBtn { width:44px; height:44px; border-radius:12px; border:0; background:#ffffff22; color:var(--text); font-size:18px; font-weight:800; }
   .overlay { position:fixed; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:24px; background:#0b1020cc; text-align:center; }
@@ -27,10 +33,9 @@
 <body>
 <canvas id="c"></canvas>
 <div id="hud" hidden>
-  <span id="lvl">LV 1</span>
-  <div class="grow"><div id="bar"><i></i></div></div>
-  <span id="score">0</span>
   <button id="pauseBtn" aria-label="Pause">II</button>
+  <div class="grow"><div id="score">0</div><div id="bar"><i></i></div></div>
+  <div id="lvlBadge" aria-live="polite"><small>LEVEL</small><b id="lvl">1</b></div>
 </div>
 
 <div id="menu" class="overlay show">

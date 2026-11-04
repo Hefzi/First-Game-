@@ -66,13 +66,15 @@ function drawRoad() {
   for (const side of [-1, 1]) { // flat kerbs along both edges
     quad(proj(side * RW, near), proj(side * (RW + 0.8), near), proj(side * (RW + 0.8), far), proj(side * RW, far), '#6b7394');
   }
-  const fz = G.LEVEL_LENGTH - s.z; // finish line
+  const fz = G.LEVEL_LENGTH - s.z; // level line: the march runs straight through it
   for (let i = 0; i < 8; i++) {
     const x0 = -RW + i * RW / 4;
     quad(proj(x0, fz), proj(x0 + RW / 4, fz), proj(x0 + RW / 4, fz + 2), proj(x0, fz + 2), i % 2 ? '#111' : '#fff');
   }
-  for (const f of s.level.forks) {
-    const a = f.z0 - s.z, b = f.z1 - s.z;
+  const lbl = proj(0, fz + 5, 0.1);
+  if (lbl && fz < far) text('LEVEL ' + (s.level.L + 1), lbl.x, lbl.y, 2.2 * lbl.k, '#ffe066');
+  for (const [f, off] of layers().flatMap(([lv, o]) => lv.forks.map(f => [f, o]))) {
+    const a = f.z0 + off - s.z, b = f.z1 + off - s.z;
     if (b < -D + 2 || a > far) continue;
     const a2 = Math.max(a, near);
     quad(proj(-0.25, a2, 1.6), proj(0.25, a2, 1.6), proj(0.25, b, 1.6), proj(-0.25, b, 1.6), '#7c85a8');
@@ -145,33 +147,45 @@ function drawShots() {
   }
 }
 
+// Current level, plus the next one (offset by a level length) once it exists, so the route ahead never pops in.
+const layers = () => (s.next ? [[s.level, 0], [s.next, G.LEVEL_LENGTH]] : [[s.level, 0]]);
+
 function draw() {
   drawRoad();
   const list = [];
-  for (let i = s.i; i < s.level.events.length; i++) {
-    const e = s.level.events[i], dz = e.z - s.z;
-    if (dz > 260) break;
-    list.push([dz, e]);
+  for (const [lv, off] of layers()) {
+    const own = lv === s.level; // passed gates and finished fights of the current level are gone
+    for (const [arr, from] of [[lv.gates, own ? s.gi : 0], [lv.hostiles, own ? s.hi : 0]]) {
+      for (let i = from; i < arr.length; i++) {
+        const e = arr[i], dz = e.z + off - s.z;
+        if (dz > 260) break;
+        list.push([dz, e]);
+      }
+    }
   }
-  list.reverse().forEach(([dz, e]) => (e.type === 'gates' ? drawGates(e, dz) : drawHostile(e, dz)));
+  list.sort((a, b) => b[0] - a[0]).forEach(([dz, e]) => (e.type === 'gates' ? drawGates(e, dz) : drawHostile(e, dz)));
   drawShots();
   drawSoldiers(crowdX(), 0, s.n, '#3b82f6', 1);
   const c = proj(crowdX(), 0, 3.2);
   if (c && s.n > 0) text(String(s.n), c.x, c.y - 0.5 * Math.sqrt(Math.min(s.n, 140)) * c.k, 1.3 * c.k);
   if (flash > 0) { ctx.fillStyle = `rgba(224,65,60,${flash * 0.5})`; ctx.fillRect(0, 0, W, H); }
   if (banner && (mode === 'play' || mode === 'hit')) {
-    text(banner.big, W / 2, H * 0.33, Math.min(W / 9, 48), banner.color);
-    if (banner.small) text(banner.small, W / 2, H * 0.33 + 44, 18);
+    text(banner.big, W / 2, H * 0.17, Math.min(W / 9, 48), banner.color); // above the road where enemies appear
+    if (banner.small) text(banner.small, W / 2, H * 0.17 + 44, 18);
   }
 }
 
 // ---------- run / score / menus ----------
 function score() { return G.liveScore(run, s); }
 function commitTop() { if (run && s && score() > best) { best = score(); store.set('ll.best', best); } }
-function saveRun() { store.set('ll.run', { level: run.level, score: run.banked }); }
-function startLevel() {
-  s = G.newLevel(run.level); targetX = 0; hitTimer = 0;
-  banner = { big: 'LEVEL ' + run.level, small: s.level.hints ? '' : 'Gate colours no longer help you', color: '#fff', t: 1.6 };
+function saveRun() { store.set('ll.run', { level: run.level, score: run.banked, start: run.start }); }
+function levelBanner() {
+  banner = { big: 'LEVEL ' + run.level, small: run.level === 4 ? 'Gate colours no longer help you' : '', color: '#fff', t: 1.6 };
+  const b = $('lvlBadge'); b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); // restart the pop animation
+}
+function startLevel() { // new run, continue, or retry after a hit
+  s = G.newLevel(run.level, run.start); targetX = 0; hitTimer = 0;
+  levelBanner();
 }
 function setMode(m) {
   mode = m;
@@ -187,10 +201,10 @@ function refreshMenu() {
   if (saved) $('continueBtn').textContent = `Continue — level ${saved.level}`;
   $('exitBtn').hidden = !window.Android;
 }
-function beginRun(level, banked) { run = G.newRun(level, banked); saveRun(); startLevel(); setMode('play'); }
+function beginRun(level, banked, start) { run = G.newRun(level, banked, start); saveRun(); startLevel(); setMode('play'); }
 
 $('newBtn').onclick = () => beginRun(1, 0);
-$('continueBtn').onclick = () => { const r = store.get('ll.run', null); r ? beginRun(r.level, r.score) : beginRun(1, 0); };
+$('continueBtn').onclick = () => { const r = store.get('ll.run', null); r ? beginRun(r.level, r.score, r.start) : beginRun(1, 0); };
 $('resetBtn').onclick = () => { if (confirm('Reset the best score to 0?')) { best = 0; store.set('ll.best', 0); refreshMenu(); } };
 $('exitBtn').onclick = () => window.Android && window.Android.exit();
 $('pauseBtn').onclick = () => pauseGame();
@@ -239,7 +253,8 @@ function frame(now) {
         mode = 'hit'; hitTimer = 1.2; flash = 1;
         banner = { big: 'HIT!', small: 'Level ' + run.level + ' restarts', color: '#ff8a8a', t: 1.2 };
       } else if (res === 'clear') {
-        G.onClear(run, s); saveRun(); startLevel(); commitTop(); // commit after the new level resets distance
+        // no stop at the level line: same crowd, same lane, the march goes on
+        G.onClear(run, s); s = G.continueLevel(s); saveRun(); commitTop(); levelBanner();
       }
     }
   } else acc = 0;
@@ -249,7 +264,7 @@ function frame(now) {
   if (!s) s = G.newLevel(1); // menu backdrop
   draw();
   if (run) {
-    $('lvl').textContent = 'LV ' + run.level;
+    $('lvl').textContent = run.level;
     $('score').textContent = score() + ' · Best ' + Math.max(best, score());
     $('bar').firstElementChild.style.width = (100 * Math.min(s.z, G.LEVEL_LENGTH) / G.LEVEL_LENGTH) + '%';
   }
