@@ -1,18 +1,21 @@
 'use strict';
-// Pure game rules: world generation, simulation step, scoring. No DOM, so Node tests run it as-is.
+// Pure game rules: wave generation, simulation step, scoring. No DOM, so Node tests run it as-is.
 //
-// One continuous road. The horde comes in zones: when the crowd reaches a zone's hold point, the whole zone
-// charges and the crowd stands its ground until every enemy is dead or has reached it. Between zones the crowd
-// marches through gate choices. A bonus lane on the right holds +tiles; some sit behind a wall that the crowd
-// only shoots while it hugs the lane (and then it does not shoot the horde). Levels are just distance markers.
+// The legion stands at the bottom of the screen and never advances. Three lanes:
+//  - left: a belt of +tiles slides toward you; stand in the lane to collect them (you still shoot the horde);
+//  - centre: a red carpet of enemies creeps toward you, with the wave's boss behind it;
+//  - right: a stone wall guards a column of maths tiles; stand in the lane to shoot the wall (and not the horde).
+//    Once it breaks the tiles slide down; you take a tile by being in the lane when it arrives, or dodge it.
+// A level is one wave. When its boss dies the next wave's carpet is already marching right behind.
 (function () {
-  const LEVEL_LENGTH = 400;   // a level is this fixed distance (world units); multiple of the 8-unit road tile
-  const RANGE = 70;           // crowd fires at the nearest target within this distance
-  const FIRE = 0.9;           // damage per soldier per second
-  const START_COUNT = 3;
-  const GAP = 20, PACK_GAP = 6, ROW_GAP = 18, LANE_HUG = 0.5;
+  const RANGE = 30;          // the legion shoots the nearest target within this distance (short: fights happen up close)
+  const FIRE = 1;            // damage per soldier per second
+  const MELEE = 1;           // enemies each soldier cuts down per second when the carpet presses against the legion
+  const START_COUNT = 5;
+  const PACE = 1.3 * 1.15;   // playtest feedback: +30%, then +15%
+  const BOSS_GAP = 20, WALL_Z = 24, SPAWN_Z = RANGE + 12, GAP = 3, PLUS_GAP = 6, BONUS_GAP = 8, LANE = 0.6;
 
-  function rng(seed) { // mulberry32: same level => same route every retry
+  function rng(seed) { // mulberry32: same level => same wave on every retry
     return function () {
       seed = (seed + 0x6D2B79F5) | 0;
       let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
@@ -22,19 +25,16 @@
   }
   const int = (r, a, b) => a + Math.floor(r() * (b - a + 1));
 
-  // Difficulty table (see README). L may be fractional, so speed ramps with distance, with no jump at a level change.
-  const PACE = 1.3 * 1.15; // playtest feedback: +30%, then +15%
-  const speedFor = L => PACE * Math.min(14 + 0.6 * (L - 1), 30);
-  const enemySpeedFor = L => 0.8 * speedFor(L);
-  const target = L => 6 + 4 * L;                                 // crowd size the horde is built for
-  const pressure = L => Math.min(0.6 + 0.1 * (L - 1), 1.9);      // zone strength in target firepowers; late peaks bleed a full legion
-  const cap = L => 2 * target(L);                                // the legion cannot grow past this
-  const bite = L => Math.min(0.7, 0.3 + 0.03 * (L - 1));         // soldiers each enemy kills when it reaches you (<1 softens the cliff)
-  // retry minimum: enough to clear the level with good choices, so a restart is never a dead end
-  const floorCrowd = L => (L === 1 ? START_COUNT : Math.ceil(Math.min(0.5 + 0.9 * pressure(L), 1.9) * target(L)));
-  const forkRows = L => (L < 3 ? 0 : L < 9 ? 2 : 3);
-  const forkChance = L => (L < 3 ? 0 : Math.min(0.15 + 0.03 * L, 0.5));
-  const segLen = L => 80 + 2 * Math.min(L, 20);                  // one zone + the march to the next one
+  // Difficulty table (see README).
+  const target = L => 8 + 4 * L;                                  // crowd size a wave is built for
+  const cap = L => Math.round(1.5 * target(L));                   // the legion cannot grow past this
+  const pressure = L => Math.min(1.3 + 0.05 * (L - 1), 1.9);      // enemies arriving, in target firepowers: dense ranks press even a full legion
+  const bite = L => Math.min(0.7, 0.3 + 0.03 * (L - 1));          // soldiers each enemy kills when it reaches you
+  const hordeSpeed = L => PACE * Math.min(5 + 0.25 * (L - 1), 11);
+  const bossSpeed = L => 0.6 * hordeSpeed(L);
+  const beltSpeed = () => PACE * 7;
+  const plusValue = L => Math.max(1, Math.round(target(L) / 40));
+  const floorCrowd = L => (L === 1 ? START_COUNT : cap(L));     // a restart gives a full legion: never a dead end
 
   function applyOp(n, g) {
     switch (g.op) {
@@ -44,204 +44,146 @@
       default: return Math.floor(n / g.v);
     }
   }
-  // Crowd after a row of gates, clipped at the cap after each gate (as in play); -Infinity if wiped out part-way.
-  function runPath(n, gates, max = Infinity) {
-    for (const g of gates) { n = Math.min(applyOp(n, g), max); if (n <= 0) return -Infinity; }
-    return n;
+
+  function bonusTile(r, L) {
+    const T = target(L), good = r() < (L < 4 ? 0.75 : Math.max(0.45, 0.75 - 0.02 * L));
+    if (good) return r() < 0.5 ? { op: '+', v: int(r, Math.round(0.5 * T), Math.round(1.2 * T)) } : { op: 'x', v: L < 6 ? 2 : int(r, 2, 3) };
+    return r() < 0.5 || L < 3 ? { op: '-', v: int(r, Math.round(0.3 * T), Math.round(0.7 * T)) } : { op: '/', v: 2 };
   }
 
-  function randGate(r, L) {
-    const T = target(L);
-    const ops = L === 1 ? ['+', 'x'] : L < 4 ? ['+', 'x', '-'] : ['+', 'x', '-', '/'];
-    const op = ops[int(r, 0, ops.length - 1)];
-    const v = op === '+' ? int(r, 2, Math.max(5, Math.ceil(0.6 * T)))
-      : op === '-' ? int(r, 2, Math.max(3, Math.floor(Math.min(0.2 + 0.03 * L, 0.5) * T)))
-      : op === 'x' ? int(r, 2, L < 6 ? 3 : 4) : int(r, 2, L < 8 ? 2 : 3); // a wrong ÷3 is brutal: from level 8
-    return { op, v };
+  function makeWave(L) {
+    const r = rng(L * 7919 + 17), T = target(L), ve = hordeSpeed(L);
+    const rho = pressure(L) * T * FIRE / ve;                      // enemies per unit of carpet
+    const secs = 12 + 0.1 * L, RANKS = [0.8, 1.0, 1.4, 1.0];      // a dense crush mid-wave presses the legion hardest
+    const carpet = RANKS.map(m => {
+      const count = Math.round(m * rho * ve * secs / RANKS.length);
+      return { type: 'carpet', count, max: count, rho: m * rho, speed: ve, z: 0, L };
+    });
+    // the boss walks BOSS_GAP behind its wave: a duel once the carpet is gone. HP = a share of what a full
+    // legion can shoot while the boss crosses that gap.
+    const bhp = Math.round(cap(L) * FIRE * (BOSS_GAP / bossSpeed(L)) * Math.min(0.4 + 0.05 * (L - 1), 0.85));
+    const whp = Math.round(T * FIRE * Math.min(1.5 + 0.1 * L, 4));
+    const tiles = [];
+    for (let i = 0; i < 4 + Math.min(4, Math.floor(L / 3)); i++) tiles.push({ ...bonusTile(r, L), z: WALL_Z + 6 + i * BONUS_GAP, L });
+    return {
+      horde: [...carpet, { type: 'boss', hp: bhp, max: bhp, speed: bossSpeed(L), z: 0, L }],
+      wall: { type: 'wall', hp: whp, max: whp, z: WALL_Z, L },
+      tiles,
+    };
   }
 
-  // Content of level L in world coordinates. Hold points sit at (k + 0.5) * SEG inside every level,
-  // so the spacing between zones stays even across level changes.
-  function build(L, attempt) {
-    const r = rng(L * 7919 + 17 + attempt * 104729), base = (L - 1) * LEVEL_LENGTH, T = target(L);
-    const K = Math.max(3, Math.round(LEVEL_LENGTH / segLen(L))), SEG = LEVEL_LENGTH / K;
-    const ve = enemySpeedFor(L), p = pressure(L);
-    const perPack = T * FIRE * PACK_GAP / ve; // enemies per pack that a crowd of T just keeps up with
-    const out = { packs: [], gates: [], tiles: [], blockers: [], forks: [], zones: [] };
-    let prevBlocker = true; // unknown for the previous level's last segment: keep its pocket clear
-    for (let k = 0; k < K; k++) {
-      const h = base + (k + 0.5) * SEG, prevH = h - SEG;
-
-      // the choice on the march to this hold point (a single row, or a locked split path)
-      const rows = forkRows(L) && r() < forkChance(L) ? forkRows(L) : 1;
-      const z0 = Math.max(prevH + 15, 10);
-      if (z0 + (rows - 1) * ROW_GAP <= h - 10) {
-        const fork = rows > 1 ? { z0: z0 - 12, z1: z0 + (rows - 1) * ROW_GAP + 4 } : null;
-        if (fork) out.forks.push(fork);
-        let left, right;
-        for (let tries = 0; tries < 40; tries++) {
-          left = []; right = [];
-          for (let i = 0; i < rows; i++) {
-            left.push(randGate(r, L));
-            let g;
-            do g = randGate(r, L); while (g.op === left[i].op && g.v === left[i].v);
-            right.push(g);
-          }
-          // fair choice: the better side keeps at least 60% of the crowd, for a small and for a full legion
-          const fair = m => Math.max(runPath(m, left, cap(L)), runPath(m, right, cap(L))) >= 0.6 * m;
-          if (fair(T) && fair(cap(L))) break;
-        }
-        for (let i = 0; i < rows; i++) out.gates.push({ type: 'gates', z: z0 + i * ROW_GAP, left: left[i], right: right[i], fork, L });
-      }
-      // free +1s in the bonus lane on the way
-      for (let z = Math.max(prevH + (prevBlocker ? 64 : 8), 6); z < h - 4; z += 7) if (r() < 0.6) out.tiles.push({ z, v: 1, pocket: null });
-
-      // the zone: L1 starts with a quiet march so a crowd of 3 can grow first
-      if (L === 1 && k === 0) { prevBlocker = false; continue; }
-      const zone = { h, woke: false };
-      out.zones.push(zone);
-      const count = Math.max(2, Math.round((SEG - GAP) / PACK_GAP));
-      for (let i = 0; i < count; i++) {
-        const wave = 0.6 + Math.sin(Math.PI * i / (count - 1)); // pressure peaks mid-zone at 1.6x
-        const hp = Math.max(1, Math.round(perPack * p * wave));
-        out.packs.push({ type: 'pack', z: h + RANGE + i * PACK_GAP, hp, max: hp, speed: ve, zone });
-      }
-      if (L % 3 === 0 && k === K - 2) { // a boss walks behind the pack every 3rd level
-        const hp = Math.round(perPack * p * 5);
-        out.packs.push({ type: 'boss', z: h + RANGE + count * PACK_GAP, hp, max: hp, speed: 0.5 * ve, zone });
-      }
-      // some bonus pockets sit behind a wall in the lane: break it (hug the lane) before the horde arrives, or lose them
-      prevBlocker = k % 2 === 1;
-      if (prevBlocker) {
-        const hp = Math.round(T * FIRE * 0.5 * RANGE / ve); // half the time before the first enemies arrive, at crowd T
-        const wall = { type: 'blocker', z: h + 30, hp, max: hp };
-        out.blockers.push(wall);
-        const each = Math.max(2, Math.round(0.12 * T));
-        for (let i = 0; i < 4; i++) out.tiles.push({ z: h + 34 + i * 8, v: each, pocket: wall });
-      }
+  const back = it => it.z + (it.type === 'carpet' ? it.count / it.rho : 3);
+  // ranks of one wave touch; the boss walks well behind its carpet; the next wave queues right behind the boss
+  const gapBefore = (prev, it) => (it.type === 'boss' ? BOSS_GAP : prev.type === 'carpet' && prev.L === it.L ? 0 : GAP);
+  function addWave(s, L) {
+    const w = makeWave(L);
+    let z = s.horde.length ? back(s.horde.at(-1)) + GAP : SPAWN_Z; // queue right behind: the horde never stops
+    for (const it of w.horde) {
+      if (s.horde.length) z = back(s.horde.at(-1)) + gapBefore(s.horde.at(-1), it);
+      it.z = z; s.horde.push(it);
     }
-    return out;
+    s.waves[L] = w;
   }
-
-  const KINDS = ['packs', 'gates', 'tiles', 'blockers', 'forks', 'zones'];
-  const blank = (L, n) => {
-    const s = { L, z: (L - 1) * LEVEL_LENGTH, x: 0, n, start: n, kills: 0, lock: 0, target: null, holding: false };
-    for (const k of KINDS) s[k] = [];
-    return s;
-  };
-  const load = (s, lv) => { for (const k of KINDS) s[k].push(...lv[k]); };
-  const clearBehind = s => { for (const e of [...s.gates, ...s.tiles]) if (e.z < s.z) e.done = true; };
-
-  // What a careful player does: read each split path whole (with the cap) and break a lane wall only while
-  // the horde is still far away. flip(decision) lets tests make deliberate mistakes.
-  function bestSide(s, g) {
-    const rows = g.fork ? s.gates.filter(h => h.fork === g.fork && !h.done) : [g];
-    return runPath(s.n, rows.map(h => h.left), cap(s.L)) >= runPath(s.n, rows.map(h => h.right), cap(s.L)) ? 'L' : 'R';
-  }
-  function autoX(s, bonus = true, flip = () => false) {
-    const g = s.gates.find(e => !e.done);
-    if (g && g.z - s.z < 45) return (bestSide(s, g) === 'L') !== flip(g.fork || g) ? -0.6 : 0.4;
-    const wall = bonus && s.blockers.find(b => b.hp > 0 && b.z >= s.z && b.z - s.z <= RANGE);
-    const near = Math.min(Infinity, ...s.packs.filter(p => p.awake && p.hp > 0).map(p => p.z - s.z));
-    return wall && near > 30 ? 0.8 : 0;
-  }
-  // A level must be winnable from the retry floor, or "the level restarts" could loop forever.
-  function winnable(L, attempt) {
-    const s = blank(L, floorCrowd(L));
-    s.verify = true;
-    load(s, build(L, attempt)); clearBehind(s);
-    for (let t = 0; t < 12 * 300; t++) { // coarse 12 Hz: cheap enough to run at a level change; tests confirm at 60 Hz
-      const res = step(s, 1 / 12, autoX(s));
-      if (res) return res === 'level';
-    }
-    return false;
-  }
-  function makeLevel(L) {
-    let attempt = 0;
-    while (attempt < 7 && !winnable(L, attempt)) attempt++; // build is deterministic, so this is the same level
-    return build(L, attempt);
-  }
-  // Start (or restart after a hit) at the beginning of level L, never below the level's floor crowd.
-  function newWorld(L = 1, start = START_COUNT) {
-    const s = blank(L, Math.min(Math.max(start, floorCrowd(L)), cap(L)));
-    load(s, makeLevel(L)); load(s, makeLevel(L + 1));
-    clearBehind(s);
+  // Start (or restart) at the beginning of level L with crowd n.
+  function newWorld(L = 1, n = START_COUNT) {
+    const s = { L, n: Math.min(n, cap(L)), x: 0, kills: 0, target: null, events: [], horde: [], plus: [], waves: {} };
+    s.start = s.n;
+    addWave(s, L); addWave(s, L + 1);
+    s.wall = s.waves[L].wall; s.tiles = s.waves[L].tiles;
+    for (let z = 4; z < SPAWN_Z + 40; z += PLUS_GAP) s.plus.push({ z, v: plusValue(L) });
     return s;
   }
-  function prune(s) {
-    s.packs = s.packs.filter(p => p.hp > 0);
-    s.gates = s.gates.filter(g => !g.done);
-    s.tiles = s.tiles.filter(t => !t.done);
-    s.blockers = s.blockers.filter(b => b.z >= s.z - 20);
-    s.forks = s.forks.filter(f => f.z1 >= s.z);
-    s.zones = s.zones.filter(zn => !zn.woke);
+  function levelUp(s) {
+    delete s.waves[s.L];
+    s.L++; s.start = s.n;
+    s.wall = s.waves[s.L].wall; s.tiles = s.waves[s.L].tiles; // the new wave brings a new wall: an unbroken one is lost
+    addWave(s, s.L + 1);
+    return 'level';
   }
-  // Advance one fixed step. Returns 'hit' (level restarts), 'level' (a level marker was passed), or null.
+
+  // Advance one fixed step. Returns 'hit' (level restarts), 'level' (a wave was beaten), or null.
+  // s.events lists what happened in this step, for effects: kills, leaks, pickups, wall breaks.
   function step(s, dt, targetX) {
-    const fork = s.forks.find(f => s.z >= f.z0 && s.z <= f.z1);
-    if (!fork) s.lock = 0; else if (!s.lock) s.lock = s.x < 0 ? -1 : 1;
-    const lo = s.lock > 0 ? 0.2 : -1, hi = s.lock < 0 ? -0.2 : 1;
-    s.x += Math.max(-6 * dt, Math.min(6 * dt, Math.max(lo, Math.min(hi, targetX)) - s.x));
-    s.x = Math.max(lo, Math.min(hi, s.x));
+    s.events.length = 0; s.target = null;
+    s.x += Math.max(-6 * dt, Math.min(6 * dt, Math.max(-1, Math.min(1, targetX)) - s.x));
+    const left = s.x <= -LANE, right = s.x >= LANE;
+    let dmg = s.n * FIRE * dt;
 
-    // stand and defend while any enemy is charging; march otherwise
-    s.holding = s.packs.some(p => p.awake && p.hp > 0);
-    if (!s.holding) s.z += speedFor(1 + s.z / LEVEL_LENGTH) * dt;
-    for (const zn of s.zones) {
-      if (zn.woke || s.z < zn.h) continue;
-      zn.woke = true;
-      for (const p of s.packs) if (p.zone === zn) p.awake = true;
+    if (right && s.wall.hp > 0) { // hugging the right lane: all fire goes into the wall
+      s.target = s.wall;
+      s.wall.hp = Math.max(0, s.wall.hp - dmg);
+      dmg = 0;
+      if (!s.wall.hp) s.events.push({ type: 'wall' });
     }
 
-    let front = null;
-    for (const p of s.packs) {
-      if (!p.awake || p.hp <= 0) continue;
-      p.z -= p.speed * dt;
-      if (!front || p.z < front.z) front = p;
-    }
-    const wall = s.x >= LANE_HUG && s.blockers.find(b => b.hp > 0 && b.z >= s.z && b.z - s.z <= RANGE);
-    s.target = wall || (front && front.z - s.z <= RANGE ? front : null);
-    if (s.target) {
-      s.target.hp = Math.max(0, s.target.hp - s.n * FIRE * dt);
-      if (s.target.hp === 0 && s.target !== wall) s.kills += s.target.max;
-    }
-    for (const p of s.packs) {
-      if (!p.awake || p.hp <= 0 || p.z > s.z) continue;
-      s.n -= Math.ceil(bite(s.L) * p.hp - 1e-9); p.hp = 0;
-      if (s.n <= 0) { s.n = 0; return 'hit'; }
+    s.horde.forEach((it, i) => {
+      it.z -= it.speed * dt;
+      if (i) it.z = Math.max(it.z, back(s.horde[i - 1]) + gapBefore(s.horde[i - 1], it));
+    });
+
+    // the legion fights whatever is in front: a carpet rank, or a boss walking alone
+    const f = s.horde[0];
+    if (f.type === 'boss') {
+      if (dmg > 0 && f.z <= RANGE) { s.target = f; f.hp -= dmg; }
+      if (f.hp <= 0) { s.kills += f.max; s.horde.shift(); s.events.push({ type: 'boss' }); return levelUp(s); }
+      if (f.z <= 0) return 'hit'; // the boss reached the legion
+    } else {
+      let arrive = 0;
+      if (f.z < 0) { arrive = Math.min(f.count, -f.z * f.rho); f.z = 0; }
+      // enemies reaching the legion: shots and melee cut them down; the rest kill soldiers as they fall
+      const held = Math.min(arrive, dmg + (arrive > 0 ? s.n * MELEE * dt : 0)), leaked = arrive - held;
+      dmg = Math.max(0, dmg - arrive);
+      s.n -= bite(s.L) * leaked;
+      f.count -= arrive; s.kills += held;
+      if (arrive > 0) s.events.push({ type: 'melee', k: held });
+      if (dmg > 0 && f.z <= RANGE && f.count > 0) {
+        // shots thin out with distance, so the carpet creeps in until kills match arrivals, close to the legion
+        const k = Math.min(dmg * (1 - f.z / RANGE), f.count);
+        f.count -= k; f.z += k / f.rho; s.kills += k;
+        s.events.push({ type: 'kill', k, z: f.z });
+      }
+      if (leaked > 0) s.events.push({ type: 'leak', k: leaked });
+      if (!s.target && f.z <= RANGE) s.target = f;
+      if (f.count <= 1e-6) s.horde.shift();
+      if (s.n < 1) { s.n = 0; return 'hit'; }
     }
 
-    for (const g of s.gates) {
-      if (g.done) continue;
-      if (s.z < g.z) continue;
-      g.done = true;
-      s.n = Math.min(applyOp(s.n, s.x < 0 ? g.left : g.right), cap(s.L));
-      if (s.n <= 0) { s.n = 0; return 'hit'; }
+    const vc = beltSpeed();
+    for (const p of s.plus) p.z -= vc * dt;
+    while (s.plus.length && s.plus[0].z <= 0) {
+      const p = s.plus.shift();
+      if (left) { s.n = Math.min(s.n + p.v, cap(s.L)); s.events.push({ type: 'plus', v: p.v }); }
     }
-    for (const t of s.tiles) {
-      if (t.done || s.z < t.z) continue;
-      t.done = true;
-      if (!t.pocket || t.pocket.hp <= 0) { s.n = Math.min(s.n + t.v, cap(s.L)); t.got = true; }
-    }
+    const lastZ = s.plus.length ? s.plus.at(-1).z : 0;
+    if (lastZ < SPAWN_Z + 40 - PLUS_GAP) s.plus.push({ z: lastZ + PLUS_GAP, v: plusValue(s.L) });
 
-    if (s.z >= s.L * LEVEL_LENGTH) { // a level is only a marker: nothing on the road changes
-      if (s.verify) return 'level';
-      s.L++; s.start = s.n;
-      prune(s); s.pending = s.L + 1;
-      return 'level';
+    if (s.wall.hp <= 0) for (const t of s.tiles) t.z -= vc * dt;
+    while (s.tiles.length && s.tiles[0].z <= 0) {
+      const t = s.tiles.shift();
+      if (!right) continue; // dodged
+      s.n = Math.min(applyOp(Math.floor(s.n), t), cap(s.L));
+      s.events.push({ type: 'tile', t });
+      if (s.n < 1) { s.n = 0; return 'hit'; }
     }
-    // build the level after next 20% into this one: never at the level change itself, and beyond the 260-unit view
-    if (s.pending && s.z >= (s.L - 0.8) * LEVEL_LENGTH) { load(s, makeLevel(s.pending)); s.pending = 0; }
     return null;
   }
 
-  // Score = points banked when the level began + distance into this level + enemies shot in it.
-  // A hit restarts the level, so the score rolls back to the banked value.
-  const newRun = (level = 1, score = 0, start = START_COUNT) => ({ level, banked: score, start });
-  const liveScore = (run, s) => run.banked + Math.floor(Math.max(0, s.z - (s.L - 1) * LEVEL_LENGTH)) + s.kills;
-  function onLevel(run, s) { run.banked += LEVEL_LENGTH + s.kills; s.kills = 0; run.level = s.L; run.start = s.start; }
+  // What a careful player does: fight from the +1 lane, break the wall only while the horde is far away,
+  // and step into the right lane only for maths tiles that help. takeAll = the thoughtless version.
+  function autoX(s, takeAll = false) {
+    const t = s.tiles[0], n = Math.floor(s.n);
+    if (s.wall.hp <= 0 && t && t.z < 10) return takeAll || Math.min(applyOp(n, t), cap(s.L)) > n ? 0.9 : -0.9;
+    const f = s.horde[0];
+    if (s.wall.hp > 0 && f.z > (f.type === 'boss' ? RANGE + 10 : 18)) return 0.9;
+    return -0.9;
+  }
 
-  const API = { LEVEL_LENGTH, RANGE, FIRE, START_COUNT, LANE_HUG, makeLevel, newWorld, step, applyOp, runPath, autoX,
-    newRun, liveScore, onLevel, speedFor, target, cap, floorCrowd };
+  // Score = points banked when the wave began + enemies shot in it. A restart rolls back to the banked value.
+  const newRun = (level = 1, score = 0, start = START_COUNT) => ({ level, banked: score, start });
+  const liveScore = (run, s) => run.banked + Math.floor(s.kills);
+  function onLevel(run, s) { run.banked += Math.floor(s.kills); s.kills = 0; run.level = s.L; run.start = s.start; }
+
+  const API = { RANGE, FIRE, START_COUNT, LANE, WALL_Z, makeWave, newWorld, step, applyOp, autoX,
+    newRun, liveScore, onLevel, target, cap, floorCrowd, hordeSpeed };
   if (typeof module !== 'undefined') module.exports = API; else window.Logic = API;
 })();
