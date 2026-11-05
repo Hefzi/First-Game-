@@ -56,7 +56,7 @@ function stamp(img, X, dz, size) {
 // ---------- drawing ----------
 const OPS = { '+': '+', '-': '−', x: '×', '/': '÷' };
 // the block's centre follows the drag but stays inside the road walls (pickup zones use s.x, not this)
-const crowdX = () => { const r = 0.36 * Math.sqrt(Math.min(Math.floor(s.n), 160)); return s.x * Math.max(0, RW - 0.8 - r); };
+const crowdX = () => { const r = 0.36 * Math.sqrt(Math.min(Math.floor(s.n), G.MAX_LEGION)); return s.x * Math.max(0, RW - 0.8 - r); };
 function quad(a, b, c, d, fill) {
   if (!a || !b || !c || !d) return;
   ctx.fillStyle = fill; ctx.beginPath();
@@ -85,17 +85,32 @@ function drawRoad() {
   for (const X of [LANE_L, LANE_R]) box(X - 0.25, X + 0.25, DIVIDER_FROM, VIEW - DIVIDER_FROM, 1.1, '#5b6178', '#8a90aa');
 }
 
-function drawCarpet(c) {
-  const rows = Math.min(Math.ceil(c.count / c.rho / 0.8), 140), cols = Math.max(4, Math.min(11, Math.round(c.rho * 1.6)));
-  for (let i = rows - 1; i >= 0; i--) {
-    const z = c.z + i * 0.8;
-    if (z > VIEW || z < -2) continue;
-    const off = (i % 2) * 0.5;
-    for (let j = 0; j < cols; j++) {
-      const u = (j + off + 0.5) / (cols + 0.5), jit = ((i * 7 + j * 13) % 10) / 25;
-      stamp(RED, LANE_L + 0.6 + u * (LANE_R - LANE_L - 1.2) + jit, z + jit, 1.5);
+// The carpet as individual soldiers in ranks (each drawn soldier = `per` enemies, 1 when density allows).
+// The front rank is partial: the soldiers nearest the legion fall first, and the dead simply vanish.
+const ROW = 0.8;
+let frontSlots = [];          // live soldiers of the front rank of the nearest carpet: bullets aim at these
+const shownCount = new WeakMap(); // carpet -> soldiers drawn last frame, to flash the ones that just died
+const colX = (cols, j, i) => LANE_L + 0.6 + ((j + (i % 2) * 0.5 + 0.5) / (cols + 0.5)) * (LANE_R - LANE_L - 1.2) + ((i * 7 + j * 13) % 10) / 25;
+function drawCarpet(c, isFront) {
+  const cols = Math.max(3, Math.min(11, Math.round(c.rho * ROW))), per = c.rho * ROW / cols;
+  const total = Math.ceil(c.count / per - 1e-6), rows = Math.ceil(total / cols), inFront = total - (rows - 1) * cols;
+  // front-rank columns, farthest from the legion first: the first `inFront` of them are still alive
+  const order = [...Array(cols).keys()].sort((a, b) => Math.abs(colX(cols, b, 0) - crowdX()) - Math.abs(colX(cols, a, 0) - crowdX()));
+  const alive = new Set(order.slice(0, inFront));
+  const before = shownCount.get(c);
+  if (before !== undefined && before > total) { // flash where the nearest soldiers just fell
+    for (let d = 0; d < Math.min(before - total, cols); d++) {
+      const j = order[(inFront + d) % cols];
+      puff(colX(cols, j, 0), c.z, 0.9, '#ffffff', 3, 3, 0.18);
     }
   }
+  shownCount.set(c, total);
+  for (let i = rows - 1; i >= 0; i--) {
+    const z = c.z + i * ROW;
+    if (z > VIEW || z < -2) continue;
+    for (let j = 0; j < cols; j++) if (i > 0 || alive.has(j)) stamp(RED, colX(cols, j, i), z, 1.5);
+  }
+  if (isFront) frontSlots = [...alive].map(j => colX(cols, j, 0));
 }
 
 function drawBoss(b) {
@@ -144,8 +159,7 @@ const puff = (X, z, y, color, n, speed = 4, life = 0.4) => {
 };
 function onEvents(evs) {
   for (const e of evs) {
-    if (e.type === 'kill' && Math.random() < Math.min(1, e.k * 3)) puff(LANE_L + 1 + Math.random() * (LANE_R - LANE_L - 2), e.z, 0.8, '#ffffff', 2);
-    else if (e.type === 'melee' && Math.random() < 0.6) puff(crowdX() + (Math.random() - 0.5) * 4, 1.2, 0.8, '#fde68a', 2, 5);
+    if (e.type === 'melee' && Math.random() < 0.6) puff(crowdX() + (Math.random() - 0.5) * 4, 1.2, 0.8, '#fde68a', 2, 5);
     else if (e.type === 'leak' && Math.random() < 0.5) puff(crowdX() + (Math.random() - 0.5) * 3, 0.3, 0.5, '#ef4444', 2, 3);
     else if (e.type === 'plus') pops.push({ str: '+' + e.v, X: crowdX() - 1, t: 0.8, color: '#93c5fd' });
     else if (e.type === 'tile') pops.push({ str: OPS[e.t.op] + e.t.v, X: crowdX() + 1, t: 1.1, color: e.t.op === '-' || e.t.op === '/' ? '#fca5a5' : '#fde047', big: true });
@@ -179,11 +193,17 @@ function drawFx(dt) {
 function drawShots() {
   const t = s.target;
   if (!t || s.n < 1) return;
-  const aim = () => (t.type === 'wall' ? proj((LANE_R + RW) / 2, t.z, 1.5 + Math.random())
-    : t.type === 'boss' ? proj((Math.random() - 0.5) * 2, t.z, 2.6) : proj(LANE_L + 1 + Math.random() * (LANE_R - LANE_L - 2), t.z, 0.8));
+  // each soldier fires at the live front-rank enemy nearest to it (or at the wall / boss)
+  const aim = sx => {
+    if (t.type === 'wall') return proj((LANE_R + RW) / 2, t.z, 1.5 + Math.random());
+    if (t.type === 'boss') return proj((Math.random() - 0.5) * 2, t.z, 2.6);
+    if (!frontSlots.length) return null;
+    const X = frontSlots.reduce((b, x) => (Math.abs(x - sx) < Math.abs(b - sx) ? x : b));
+    return proj(X, t.z, 0.8);
+  };
   ctx.lineWidth = 2; ctx.strokeStyle = '#fef9c3';
   for (let i = 0; i < Math.min(Math.ceil(s.n), 28); i++) {
-    const p = FORM[i], from = proj(crowdX() + p.ox, p.oz, 1.4), to = aim();
+    const p = FORM[i], from = proj(crowdX() + p.ox, p.oz, 1.4), to = aim(crowdX() + p.ox);
     if (!from || !to) continue;
     const u = (time * 3 + i * 0.37) % 1, v = Math.min(1, u + 0.12);
     ctx.globalAlpha = 0.85;
@@ -196,7 +216,7 @@ function drawShots() {
 }
 
 // Legion formation: a tight sunflower, back rows first so near soldiers draw on top.
-const FORM = Array.from({ length: 160 }, (_, i) => {
+const FORM = Array.from({ length: G.MAX_LEGION }, (_, i) => {
   const r = 0.36 * Math.sqrt(i), a = i * 2.39996;
   return { ox: r * Math.cos(a), oz: r * Math.sin(a) * 0.6 };
 });
@@ -207,10 +227,11 @@ function draw(dt) {
   if (shake > 0) ctx.translate((Math.random() - 0.5) * 10 * shake, (Math.random() - 0.5) * 10 * shake);
   drawRoad();
   drawLanes();
+  frontSlots = [];
   for (let i = s.horde.length - 1; i >= 0; i--) { // far to near
     const it = s.horde[i];
     if (it.z > VIEW) continue;
-    if (it.type === 'boss') drawBoss(it); else drawCarpet(it);
+    if (it.type === 'boss') drawBoss(it); else drawCarpet(it, i === 0);
   }
   drawShots();
   const n = Math.min(Math.floor(s.n), FORM.length);

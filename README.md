@@ -5,12 +5,12 @@ An original Android crowd-battle game about timing and mental maths. Your legion
 ## Rules
 
 - **Your legion stands still** at the bottom of the screen. Drag left or right to move it between three lanes. It shoots the nearest enemy by itself.
-- **Centre: the horde.** A red carpet of enemies creeps toward you in ranks, and a dense rank pushes right into your legion. Shots work better up close. When the carpet touches, your soldiers also fight hand to hand, and you only lose soldiers when more enemies arrive than you can cut down.
+- **Centre: the horde.** A red carpet of enemies creeps toward you in ranks, and a dense rank pushes right into your legion. Your soldiers shoot the enemies in the front rank nearest to them, and a killed enemy vanishes. Shots work better up close. When the carpet touches, your soldiers also fight hand to hand, and you only lose soldiers when more enemies arrive than you can cut down.
 - **Left lane: the blue belt.** Blue `+` tiles slide toward you. Stand in the lane to collect them. You still shoot the horde from there.
 - **Right lane: the wall and the maths tiles.** A stone wall with HP guards a column of yellow maths tiles (`+`, `×`, `−`, `÷`). Stand in the lane to shoot the wall, but **while you do, you do not shoot the horde.** Once the wall breaks, the tiles slide down. Stand in the lane to take a tile, or step out to dodge it. Work out each one before it arrives. Tile colours stop giving hints at level 4.
 - **Boss.** Each wave ends with a boss that walks in behind its carpet, alone. Kill it before it reaches your legion. If it reaches you, the level restarts.
 - **Level = one wave.** When the boss dies, the level badge at top right counts up. The next wave's carpet is already marching in right behind it, so there is no break. A new wave brings a new wall: a wall you did not break is lost.
-- **Legion cap:** your crowd cannot grow past 1.5× the level's target size (the count turns gold and shows `MAX`). At the cap, a `+` or `×` tile is wasted.
+- **Legion cap:** your crowd cannot grow past 1.5× the level's target size, and **never past 100 soldiers** (the count turns gold and shows `MAX`). At the cap, a `+` or `×` tile is wasted.
 - **No game over.** If your legion falls to 0, or a boss reaches it, the level restarts with a full legion.
 - **Score** = enemies shot. It banks at each level and rolls back to that value on a restart. **Best score** is saved on the device. You can reset it from the main menu (with a confirm step).
 - **Pause menu:** *Resume*, *Restart from level 1*, and *Quit to menu*. Restart and Quit both save your score to the best score. Quit also saves your run, so the main menu shows *Continue — level N*.
@@ -18,8 +18,8 @@ An original Android crowd-battle game about timing and mental maths. Your legion
 
 ## How a wave works
 
-- Each wave is built for the level's **target crowd** (12 at level 1, +4 per level), not for your actual crowd. A bigger legion holds the carpet further away and loses fewer soldiers.
-- Enemy arrival rises from 1.3× to 1.9× the target's firepower. Each carpet has four ranks: a lighter front, an even middle, a dense crush (1.4×), and an even rear.
+- Each wave is built for the level's **target crowd** (12 at level 1, +4 per level, levelling off at 67 from level 15 so that the cap is 100), not for your actual crowd. A bigger legion holds the carpet further away and loses fewer soldiers.
+- Enemy arrival rises from 1.3× to 2.0× the target's firepower (by level 15); after that, horde speed keeps rising until level 25. Each carpet has four ranks: a lighter front, an even middle, a dense crush (1.4×), and an even rear.
 - An enemy that gets through kills 0.3 soldiers at level 1, rising to 0.7.
 - The wall's HP and the boss's HP grow with the level. The boss's HP is sized so that a full legion can kill it in the time it needs to walk in.
 - The math column has 4 to 8 tiles. Good tiles (`+`, `×`) are 75% of them at first, falling to 45%.

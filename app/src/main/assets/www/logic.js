@@ -26,9 +26,11 @@
   const int = (r, a, b) => a + Math.floor(r() * (b - a + 1));
 
   // Difficulty table (see README).
-  const target = L => 8 + 4 * L;                                  // crowd size a wave is built for
-  const cap = L => Math.round(1.5 * target(L));                   // the legion cannot grow past this
-  const pressure = L => Math.min(1.3 + 0.05 * (L - 1), 1.9);      // enemies arriving, in target firepowers: dense ranks press even a full legion
+  const MAX_LEGION = 100;                                          // playtest feedback: never more than 100 soldiers
+  const target = L => Math.min(8 + 4 * L, 67);                    // crowd size a wave is built for; levels off so the cap is 100
+  const cap = L => Math.min(MAX_LEGION, Math.round(1.5 * target(L))); // the legion cannot grow past this
+  // enemies arriving, in target firepowers: dense ranks press even a full legion; keeps rising after the target levels off
+  const pressure = L => Math.min(1.3 + 0.05 * (L - 1), 2.0);
   const bite = L => Math.min(0.7, 0.3 + 0.03 * (L - 1));          // soldiers each enemy kills when it reaches you
   const hordeSpeed = L => PACE * Math.min(5 + 0.25 * (L - 1), 11);
   const bossSpeed = L => 0.6 * hordeSpeed(L);
@@ -183,7 +185,7 @@
   const liveScore = (run, s) => run.banked + Math.floor(s.kills);
   function onLevel(run, s) { run.banked += Math.floor(s.kills); s.kills = 0; run.level = s.L; run.start = s.start; }
 
-  const API = { RANGE, FIRE, START_COUNT, LANE, WALL_Z, makeWave, newWorld, step, applyOp, autoX,
+  const API = { MAX_LEGION, RANGE, FIRE, START_COUNT, LANE, WALL_Z, makeWave, newWorld, step, applyOp, autoX,
     newRun, liveScore, onLevel, target, cap, floorCrowd, hordeSpeed };
   if (typeof module !== 'undefined') module.exports = API; else window.Logic = API;
 })();

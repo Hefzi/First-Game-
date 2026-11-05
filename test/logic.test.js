@@ -100,8 +100,14 @@ test('a boss that reaches the legion restarts the level', () => {
   assert.strictEqual(res, 'hit');
 });
 
-test('the legion never grows past its cap', () => {
+test('the legion never grows past its cap, and never past 100 soldiers at any level', () => {
   for (let L = 2; L <= 40; L++) assert.ok(C.starts[L] <= G.cap(L), `level ${L}: ${C.starts[L]} > ${G.cap(L)}`);
+  for (let L = 1; L <= 100; L++) assert.ok(G.cap(L) <= 100 && G.floorCrowd(L) <= 100, `level ${L}`);
+  const s = G.newWorld(30, 1e9);
+  assert.strictEqual(s.n, 100, 'a huge start is clipped to 100');
+  s.wall.hp = 0; s.tiles = [{ op: 'x', v: 3, z: 0.5, L: 30 }]; s.x = 1;
+  G.step(s, 0.1, 1);
+  assert.ok(s.n <= 100, `a x3 tile at the cap stays at ${s.n}`);
 });
 
 test('score: kills bank at each level and roll back on a restart', () => {
